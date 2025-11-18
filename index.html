@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Scheduler Predictor — Dashboard</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root{
+      --bg: #f5f7fa;
+      --card: #ffffff;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --success: #16a34a;
+      --danger: #ef4444;
+      --glass: rgba(255,255,255,0.6);
+      --shadow: 0 6px 18px rgba(15,23,42,0.08);
+      --radius: 12px;
+      font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+    }
+
+    [data-theme="dark"]{
+      --bg: #0b1220;
+      --card: #071025;
+      --muted: #9ca3af;
+      --accent: #60a5fa;
+      --glass: rgba(255,255,255,0.03);
+      --shadow: 0 6px 18px rgba(2,6,23,0.6);
+    }
+
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--muted);} 
+    .app {max-width:1200px;margin:18px auto;padding:18px;}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    h1{margin:0;color:var(--accent);font-size:20px}
+    .controls{display:flex;gap:8px;align-items:center}
+    .btn{background:var(--card);border:1px solid rgba(0,0,0,0.06);padding:8px 12px;border-radius:8px;cursor:pointer;box-shadow:var(--shadow)}
+    .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04)}
+
+    .grid{display:grid;grid-template-columns:1fr 420px;gap:16px;margin-top:16px}
+    .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px}
+    .card h2{margin:0 0 8px 0;font-size:14px;color:var(--muted)}
+
+    /* table */
+    .table-wrap{overflow:auto;max-height:420px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:8px;border-bottom:1px solid rgba(0,0,0,0.04);text-align:center}
+    th{background:linear-gradient(90deg,rgba(0,0,0,0.02),transparent);font-weight:600;color:var(--muted)}
+    tr:hover td{background:var(--glass)}
+
+    /* chart area */
+    .charts{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .fullwidth{grid-column:1/3}
+
+    /* filters */
+    .filters{display:flex;gap:8px;flex-wrap:wrap}
+    input[type=search],select{padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);min-width:160px}
+
+    .stat-row{display:flex;gap:12px;align-items:center;justify-content:space-between}
+    .stat{flex:1;padding:8px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);text-align:center}
+    .stat strong{display:block;font-size:18px;color:var(--accent)}
+
+    footer{margin-top:18px;text-align:center;color:var(--muted);font-size:13px}
+
+    @media (max-width:980px){
+      .grid{grid-template-columns:1fr}
+      .charts{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app" data-theme="light">
+    <header>
+      <h1>AI Scheduler Predictor — Live Dashboard</h1>
+
+      <div class="controls">
+        <button class="btn" id="refreshBtn">Refresh Now</button>
+        <button class="btn" id="downloadCsv">Download CSV</button>
+        <label class="btn ghost" for="realtimeToggle">Realtime</label>
+        <input type="checkbox" id="realtimeToggle" checked style="display:none" />
+
+        <select id="themeSelect" class="btn">
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- left: tables + charts -->
+      <div>
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <h2>Processes (live)</h2>
+            <div class="filters">
+              <input type="search" id="searchBox" placeholder="Search by name or pid..." />
+              <select id="schedulerFilter"><option value="">All schedulers</option></select>
+              <select id="priorityFilter"><option value="">All priorities</option></select>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table id="processTable">
+              <thead>
+                <tr>
+                  <th>Process Name</th>
+                  <th>PID</th>
+                  <th>Arrival</th>
+                  <th>Burst</th>
+                  <th>Priority</th>
+                  <th>IO Wait</th>
+                  <th>Ctx Switches</th>
+                  <th>CPU %</th>
+                  <th>Waiting</th>
+                  <th>Turnaround</th>
+                  <th>Predicted</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:10px;align-items:center;justify-content:space-between">
+            <div class="stat-row" style="flex:1">
+              <div class="stat">
+                <small>Processes</small>
+                <strong id="statCount">0</strong>
+              </div>
+              <div class="stat">
+                <small>Avg CPU %</small>
+                <strong id="statAvgCpu">0</strong>
+              </div>
+              <div class="stat">
+                <small>Total IO</small>
+                <strong id="statIo">0</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card charts" style="margin-top:12px">
+          <div class="fullwidth card" style="padding:10px">
+            <h2>Schedulers Count</h2>
+            <canvas id="schedulerCountChart" height="120"></canvas>
+          </div>
+
+          <div class="card">
+            <h2>CPU Utilization (history)</h2>
+            <canvas id="cpuChart" height="140"></canvas>
+          </div>
+
+          <div class="card">
+            <h2>Burst vs IO (scatter)</h2>
+            <canvas id="burstIoChart" height="140"></canvas>
+          </div>
+
+          <div class="card">
+            <h2>Context Switches per Process</h2>
+            <canvas id="ctxChart" height="140"></canvas>
+          </div>
+
+          <div class="card fullwidth">
+            <h2>Priority Distribution</h2>
+            <canvas id="priorityChart" height="120"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- right: details + controls -->
+      <aside>
+        <div class="card">
+          <h2>Controls & Settings</h2>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+            <label>API</label>
+            <input id="apiUrl" value="http://127.0.0.1:8000" />
+
+            <label>Update interval (ms)</label>
+            <input id="updateInterval" type="number" value="1000" />
+
+            <label>Keep history (points)</label>
+            <input id="historyLimit" type="number" value="60" />
+
+            <label>Auto-connect WebSocket</label>
+            <input type="checkbox" id="autoWs" checked />
+
+            <button class="btn" id="clearHistory">Clear History</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h2>Selected Process</h2>
+          <div id="selectedInfo"><small>No process selected. Click a row to inspect.</small></div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h2>Legend / Notes</h2>
+          <ul style="margin:6px 0;padding-left:18px;color:var(--muted)">
+            <li>All numeric fields are sanitized by backend's safe() function.</li>
+            <li>Charts keep a sliding history — configurable via "Keep history".</li>
+            <li>WebSocket preferred; falls back to REST polling if unavailable.</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+
+    <footer>AI Scheduler Predictor • Live monitoring powered by your FastAPI backend</footer>
+  </div>
+
+<script>
+// ----------------------
+// Utilities + State
+// ----------------------
+const state = {
+  apiBase: document.getElementById('apiUrl').value.replace(/\/+$/,'') || 'http://127.0.0.1:8000',
+  ws: null,
+  historyLimit: Number(document.getElementById('historyLimit').value) || 60,
+  updateInterval: Number(document.getElementById('updateInterval').value) || 1000,
+  realtime: document.getElementById('realtimeToggle').checked,
+  data: [], // current snapshot
+  history: [], // snapshots over time
+  pidMap: new Map(),
+};
+
+function now_ts(){ return new Date().toLocaleTimeString(); }
+
+// ----------------------
+// DOM helpers
+// ----------------------
+const tbody = document.querySelector('#processTable tbody');
+const schedulerFilter = document.getElementById('schedulerFilter');
+const priorityFilter = document.getElementById('priorityFilter');
+const searchBox = document.getElementById('searchBox');
+
+// ----------------------
+// Charts (initialized later)
+// ----------------------
+let schedulerCountChart, cpuChart, burstIoChart, ctxChart, priorityChart;
+
+function makeChart(ctx, config){ return new Chart(ctx, config); }
+
+// ----------------------
+// Data handling
+// ----------------------
+function normalizeRow(r){
+  // ensure consistent fields and types
+  return {
+    process_name: r.process_name || r.process || 'unknown',
+    pid: String(r.pid ?? ''),
+    arrival_time: Number(r.arrival_time ?? 0),
+    burst_time: Number(r.burst_time ?? 0),
+    priority: Number(r.priority ?? 0),
+    io_wait_time: Number(r.io_wait_time ?? 0),
+    context_switches: Number(r.context_switches ?? 0),
+    cpu_utilization: Number(r.cpu_utilization ?? 0),
+    waiting_time: Number(r.waiting_time ?? 0),
+    turnaround_time: Number(r.turnaround_time ?? 0),
+    predicted_scheduler: String(r.predicted_scheduler ?? r.predicted ?? 'unknown')
+  };
+}
+
+function ingestSnapshot(list){
+  const ts = now_ts();
+  const normalized = list.map(normalizeRow);
+  state.data = normalized;
+  state.history.push({ts, rows: normalized});
+  if(state.history.length > state.historyLimit) state.history.shift();
+  // update pid map for context switches persistence
+  normalized.forEach(r => state.pidMap.set(r.pid, r));
+}
+
+// ----------------------
+// Render table
+// ----------------------
+function buildFilters(){
+  // build scheduler and priority options
+  const scheds = new Set();
+  const prios = new Set();
+  state.data.forEach(r => { scheds.add(r.predicted_scheduler); prios.add(String(r.priority)); });
+
+  // refresh selects
+  schedulerFilter.innerHTML = '<option value="">All schedulers</option>' + [...scheds].map(s=>`<option value="${s}">${s}</option>`).join('');
+  priorityFilter.innerHTML = '<option value="">All priorities</option>' + [...prios].sort((a,b)=>Number(a)-Number(b)).map(p=>`<option value="${p}">${p}</option>`).join('');
+}
+
+function updateTable(){
+  const q = (searchBox.value || '').toLowerCase();
+  const schedSel = schedulerFilter.value;
+  const prioSel = priorityFilter.value;
+
+  tbody.innerHTML = '';
+  state.data.forEach(r => {
+    if(schedSel && r.predicted_scheduler !== schedSel) return;
+    if(prioSel && String(r.priority) !== prioSel) return;
+    if(q){ if(!r.process_name.toLowerCase().includes(q) && !String(r.pid).includes(q)) return; }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.process_name}</td>
+      <td>${r.pid}</td>
+      <td>${r.arrival_time.toFixed(2)}</td>
+      <td>${r.burst_time.toFixed(2)}</td>
+      <td>${r.priority}</td>
+      <td>${r.io_wait_time.toFixed(2)}</td>
+      <td>${r.context_switches}</td>
+      <td>${r.cpu_utilization.toFixed(2)}</td>
+      <td>${r.waiting_time.toFixed(2)}</td>
+      <td>${r.turnaround_time.toFixed(2)}</td>
+      <td>${r.predicted_scheduler}</td>
+    `;
+
+    tr.addEventListener('click', ()=>selectRow(r));
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('statCount').textContent = state.data.length;
+  const avgCpu = state.data.reduce((s,x)=>s+x.cpu_utilization,0)/Math.max(1,state.data.length);
+  document.getElementById('statAvgCpu').textContent = avgCpu.toFixed(2);
+  const totalIo = state.data.reduce((s,x)=>s+x.io_wait_time,0);
+  document.getElementById('statIo').textContent = totalIo.toFixed(2);
+}
+
+function selectRow(r){
+  const el = document.getElementById('selectedInfo');
+  el.innerHTML = `
+    <strong>${r.process_name} (pid ${r.pid})</strong>
+    <div>CPU: ${r.cpu_utilization.toFixed(2)}%</div>
+    <div>Burst: ${r.burst_time.toFixed(2)} | IO: ${r.io_wait_time.toFixed(2)}</div>
+    <div>Ctx Switches: ${r.context_switches} | Priority: ${r.priority}</div>
+    <div>Waiting: ${r.waiting_time.toFixed(2)} | Turnaround: ${r.turnaround_time.toFixed(2)}</div>
+    <div>Predicted: <strong>${r.predicted_scheduler}</strong></div>
+  `;
+}
+
+// ----------------------
+// Charts update
+// ----------------------
+function initCharts(){
+  // schedulerCountChart (bar)
+  schedulerCountChart = makeChart(document.getElementById('schedulerCountChart'), {
+    type: 'bar', data: {labels:[], datasets:[{label:'Count', data:[]}]}, options:{responsive:true, maintainAspectRatio:false}
+  });
+
+  cpuChart = makeChart(document.getElementById('cpuChart'), {
+    type: 'line', data: {labels:[], datasets:[{label:'Avg CPU %', data:[], tension:0.3}]}, options:{responsive:true, maintainAspectRatio:false}
+  });
+
+  burstIoChart = makeChart(document.getElementById('burstIoChart'), {
+    type: 'scatter', data: {datasets:[]}, options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}}
+  });
+
+  ctxChart = makeChart(document.getElementById('ctxChart'), {
+    type:'bar', data:{labels:[], datasets:[{label:'Ctx Switches', data:[]}]}, options:{responsive:true, maintainAspectRatio:false}
+  });
+
+  priorityChart = makeChart(document.getElementById('priorityChart'), {
+    type:'pie', data:{labels:[], datasets:[{data:[]}]}, options:{responsive:true, maintainAspectRatio:false}
+  });
+}
+
+function updateCharts(){
+  // scheduler counts (latest snapshot)
+  const latest = state.history[state.history.length-1];
+  if(!latest) return;
+  const counts = {};
+  latest.rows.forEach(r=>counts[r.predicted_scheduler] = (counts[r.predicted_scheduler]||0)+1);
+  schedulerCountChart.data.labels = Object.keys(counts);
+  schedulerCountChart.data.datasets[0].data = Object.values(counts);
+  schedulerCountChart.update();
+
+  // avg CPU history
+  const labels = state.history.map(h=>h.ts);
+  const avgCpu = state.history.map(h=>{
+    const a = h.rows.reduce((s,x)=>s+x.cpu_utilization,0);
+    return (h.rows.length? (a/h.rows.length) : 0).toFixed(2);
+  });
+  cpuChart.data.labels = labels;
+  cpuChart.data.datasets[0].data = avgCpu;
+  cpuChart.update();
+
+  // burst vs io scatter (latest)
+  burstIoChart.data.datasets = [{label:'Burst vs IO', data: latest.rows.map(r=>({x:r.burst_time, y:r.io_wait_time, pid:r.pid, name:r.process_name}))}];
+  burstIoChart.update();
+
+  // ctx chart (latest top 10)
+  const sorted = [...latest.rows].sort((a,b)=>b.context_switches - a.context_switches).slice(0,12);
+  ctxChart.data.labels = sorted.map(r=>`${r.process_name} (${r.pid})`);
+  ctxChart.data.datasets[0].data = sorted.map(r=>r.context_switches);
+  ctxChart.update();
+
+  // priority pie
+  const prCounts = {};
+  latest.rows.forEach(r=>{ prCounts[r.priority] = (prCounts[r.priority]||0)+1; });
+  priorityChart.data.labels = Object.keys(prCounts);
+  priorityChart.data.datasets[0].data = Object.values(prCounts);
+  priorityChart.update();
+}
+
+// ----------------------
+// Networking: WebSocket preferred, fallback to REST
+// ----------------------
+let reconnectTimer = null;
+async function connectWebSocket(){
+  if(!document.getElementById('autoWs').checked) return;
+  const base = state.apiBase.replace(/^http/,'ws');
+  const wsUrl = base + '/ws/predict';
+
+  try{
+    state.ws = new WebSocket(wsUrl);
+  } catch(err){
+    console.warn('WS connect failed', err); scheduleRestPoll(); return;
+  }
+
+  state.ws.onopen = ()=>{ console.info('WS open', wsUrl); };
+  state.ws.onmessage = (ev)=>{
+    try{
+      const payload = JSON.parse(ev.data);
+      const list = payload.data || payload;
+      ingestSnapshot(list);
+      buildFilters();
+      updateTable();
+      updateCharts();
+    }catch(e){console.error('Invalid WS msg',e)}
+  };
+  state.ws.onclose = ()=>{ console.info('WS closed'); scheduleRestPoll(); }
+  state.ws.onerror = (e)=>{ console.error('WS error', e); state.ws.close(); }
+}
+
+let restTimer = null;
+function scheduleRestPoll(){
+  if(restTimer) clearInterval(restTimer);
+  restTimer = setInterval(()=>fetchSnapshot(), state.updateInterval);
+}
+
+async function fetchSnapshot(){
+  try{
+    const res = await fetch(state.apiBase + '/predict');
+    const data = await res.json();
+    if(Array.isArray(data)){
+      ingestSnapshot(data);
+      buildFilters();
+      updateTable();
+      updateCharts();
+    } else if(data && data.data){
+      ingestSnapshot(data.data);
+      buildFilters(); updateTable(); updateCharts();
+    }
+  }catch(e){ console.error('fetch error', e); }
+}
+
+// ----------------------
+// UI wiring
+// ----------------------
+document.getElementById('refreshBtn').addEventListener('click', ()=>{ fetchSnapshot(); });
+document.getElementById('downloadCsv').addEventListener('click', ()=>{
+  // flatten last snapshot
+  const rows = state.data;
+  if(!rows.length) return alert('No data to download');
+  const hdr = Object.keys(rows[0]);
+  const csv = [hdr.join(',')].concat(rows.map(r=>hdr.map(k=>String(r[k]).replace(/"/g,'""')).map(v=>`"${v}"`).join(','))).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='process_snapshot.csv'; a.click(); URL.revokeObjectURL(url);
+});
+
+searchBox.addEventListener('input', ()=>updateTable());
+schedulerFilter.addEventListener('change', ()=>updateTable());
+priorityFilter.addEventListener('change', ()=>updateTable());
+
+// settings
+document.getElementById('apiUrl').addEventListener('change',(e)=>{ state.apiBase = e.target.value.replace(/\/+$/,''); reconnect(); });
+document.getElementById('updateInterval').addEventListener('change',(e)=>{ state.updateInterval = Number(e.target.value); if(restTimer){ clearInterval(restTimer); scheduleRestPoll(); }});
+document.getElementById('historyLimit').addEventListener('change',(e)=>{ state.historyLimit = Number(e.target.value); while(state.history.length > state.historyLimit) state.history.shift(); });
+document.getElementById('clearHistory').addEventListener('click', ()=>{ state.history = []; updateCharts(); });
+
+// theme
+document.getElementById('themeSelect').addEventListener('change',(e)=>{ document.getElementById('app').setAttribute('data-theme', e.target.value); });
+
+// toggles
+document.getElementById('realtimeToggle').addEventListener('change',(e)=>{ state.realtime = e.target.checked; if(state.realtime) reconnect(); else { if(state.ws) state.ws.close(); } });
+
+// auto ws
+function reconnect(){ if(state.ws){ try{state.ws.close();}catch(e){} } if(document.getElementById('autoWs').checked) connectWebSocket(); else scheduleRestPoll(); }
+
+// initial startup
+initCharts();
+if(document.getElementById('autoWs').checked) connectWebSocket(); else scheduleRestPoll();
+
+// fallback: if ws fails to open within a short time, start rest polling
+setTimeout(()=>{ if(!state.ws || state.ws.readyState !== 1) scheduleRestPoll(); }, 1200);
+
+// expose some debug
+window.__aiScheduler = { state, fetchSnapshot };
+</script>
+</body>
+</html>
